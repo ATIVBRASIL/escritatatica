@@ -1,0 +1,8 @@
+{
+  "name": "Escrita Tática ATIV",
+  "description": "Ferramenta de suporte à decisão e redação técnica para profissionais de segurança privada. Transforma relatos em documentos jurídicos estruturados.",
+  "requestFramePermissions": [
+    "geolocation",
+    "microphone"
+  ]
+}
