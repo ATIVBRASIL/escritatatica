@@ -63,14 +63,14 @@ const App: React.FC = () => {
     // 1. Checa sessão inicial
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchProfile(session.user.id);
+      if (session) fetchProfile(session.user.id, session.user.email);
       else setLoading(false);
     });
 
     // 2. Escuta mudanças de estado (Login/Logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) fetchProfile(session.user.id);
+      if (session) fetchProfile(session.user.id, session.user.email);
       else {
         setUserProfile(null);
         setLoading(false);
@@ -80,26 +80,44 @@ const App: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase
+  // --- FUNÇÃO ATUALIZADA: Criação Automática de Perfil ---
+  const fetchProfile = async (userId: string, email?: string) => {
+    // 1. Tenta buscar o perfil existente
+    let { data, error } = await supabase
       .from('profiles')
       .select('is_active, daily_usage')
       .eq('id', userId)
       .single();
     
-    if (data) setUserProfile(data);
+    // 2. Se o perfil não existir, cria um novo automaticamente
+    if (error || !data) {
+      const { data: newData, error: createError } = await supabase
+        .from('profiles')
+        .insert([{ 
+          id: userId, 
+          email: email, 
+          is_active: false, // Inicia bloqueado até o senhor autorizar
+          daily_usage: 0 
+        }])
+        .select()
+        .single();
+        
+      if (newData) setUserProfile(newData);
+    } else {
+      setUserProfile(data);
+    }
     setLoading(false);
   };
 
   // --- Lógica de Processamento com IA ---
   const processReport = async () => {
     if (!userProfile?.is_active) {
-      alert("Acesso restrito. Assinatura pendente.");
+      alert("⚠️ ACESSO RESTRITO: Sua assinatura ainda não foi ativada pelo administrador.");
       return;
     }
 
     if (userProfile.daily_usage >= DAILY_LIMIT) {
-      alert("Limite de 5 relatos diários atingido.");
+      alert("❌ LIMITE DIÁRIO: Você já utilizou seus 5 relatos de hoje.");
       return;
     }
     
@@ -108,7 +126,6 @@ const App: React.FC = () => {
     try {
       const refinedText = await refineIncidentReport(report.rawDescription, report.forceLevel);
       
-      // Gasta 1 "munição" no banco de dados
       const nextUsage = userProfile.daily_usage + 1;
       await supabase
         .from('profiles')
@@ -171,7 +188,6 @@ const App: React.FC = () => {
     </div>
   );
 
-  // --- Controle de Fluxo de Visualização ---
   if (loading) {
     return (
       <div className="min-h-screen bg-[#050505] flex items-center justify-center">
@@ -180,12 +196,10 @@ const App: React.FC = () => {
     );
   }
 
-  // Se não houver sessão ativa, exibe o Portão de Login
   if (!session) {
     return <Auth />;
   }
 
-  // Se logado, exibe a Interface Operacional
   return (
     <div className="min-h-screen bg-[#050505] text-gray-200 font-sans">
       <header className="sticky top-0 z-50 bg-[#050505]/95 backdrop-blur-md border-b border-[#1C1C1E] px-4 py-3 flex justify-between items-center">
