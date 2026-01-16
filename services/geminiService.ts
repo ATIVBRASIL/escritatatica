@@ -2,21 +2,36 @@ import { supabase } from '../supabaseClient';
 
 export const refineIncidentReport = async (text: string, forceLevel: string) => {
   try {
-    // 1. Invocação da Edge Function
-    const { data, error } = await supabase.functions.invoke('refine-report', {
-      body: { prompt: text, forceLevel }, // Mudamos rawDescription para prompt
+    // Pegando as coordenadas direto do cliente que configuramos
+    const { data: { publicUrl } } = { data: { publicUrl: 'https://dbbzehyummpjyedxmsme.supabase.co/functions/v1/refine-report' } };
+    const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRiYnplaHl1bW1wanllZHhtc21lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1Njc4MTMsImV4cCI6MjA4NDE0MzgxM30.sFH5-IG1ZmUh5OpXZrsg0aogm-Qt2CyF6eyrCaGAOlQ';
+
+    console.log("Iniciando incursão no servidor...");
+
+    const response = await fetch(publicUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${anonKey}`, // Usando a chave que você me passou
+        'apikey': anonKey
+      },
+      body: JSON.stringify({ prompt: text, forceLevel: forceLevel })
     });
 
-    if (error) throw error;
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Erro na comunicação com o servidor');
+    }
 
-    // 2. Retorno do texto refinado
-    return data.refinedText; // Mudamos refinedDescription para refinedText
+    const result = await response.json();
+    return result.refinedText;
+
   } catch (error) {
-    console.error("Falha na extração de dados táticos:", error);
-    throw new Error("Erro ao processar o relatório via servidor seguro.");
+    console.error("PANE NA COMUNICAÇÃO:", error);
+    throw error;
   }
 };
 
 export const generateMotivationalMessage = () => {
-  return "Mantenha a postura, Guerreiro. Sua caneta é sua melhor defesa após a crise.";
+  return "Força e Honra, Tenente. O relatório está a caminho.";
 };
