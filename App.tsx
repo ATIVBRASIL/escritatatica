@@ -9,7 +9,6 @@ import {
   ArrowRight,
   RotateCcw,
   Share,
-  Download,
   HeartHandshake,
   X
 } from 'lucide-react';
@@ -22,7 +21,7 @@ import { refineIncidentReport, generateMotivationalMessage } from './services/ge
 // --- Phases of the Application ---
 enum AppPhase {
   WELCOME,
-  MOOD_CHECK, // New Phase for the survey
+  MOOD_CHECK, 
   READINESS,
   INCIDENT_LEVEL,
   INCIDENT_DETAILS,
@@ -71,7 +70,6 @@ const App: React.FC = () => {
 
   // --- Effects ---
   useEffect(() => {
-    // Get geolocation on mount if possible
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -91,13 +89,10 @@ const App: React.FC = () => {
   // --- Handlers ---
   const handlePanic = () => {
     alert("BOTÃO DE PÂNICO ACIONADO: Coordenadas enviadas para supervisão.");
-    // In real app, this would call an API endpoint immediately
   };
 
   const processReport = async () => {
     setPhase(AppPhase.PROCESSING);
-    
-    // Simulate AI delay and call service
     const refinedText = await refineIncidentReport(report.rawDescription, report.forceLevel);
     
     setReport(prev => ({
@@ -109,11 +104,16 @@ const App: React.FC = () => {
     setPhase(AppPhase.RESULT);
   };
 
+  const handleCopy = () => {
+    if (report.refinedDescription) {
+      navigator.clipboard.writeText(report.refinedDescription);
+      alert("Copiado com sucesso! O relatório está na área de transferência.");
+    }
+  };
+
   const toggleMic = () => {
-    // Microphone simulation
     if (!isListening) {
       setIsListening(true);
-      // Simulate voice input
       setTimeout(() => {
         setReport(prev => ({
           ...prev,
@@ -136,7 +136,6 @@ const App: React.FC = () => {
     });
     setChecklist({ uniform: false, cnv: false });
     setPhase(AppPhase.WELCOME);
-    // Reset Mood
     setMoodAnswers([]);
     setCurrentQuestionIdx(0);
     setDailyMessage(null);
@@ -157,7 +156,6 @@ const App: React.FC = () => {
     if (currentQuestionIdx < MOOD_QUESTIONS.length - 1) {
       setCurrentQuestionIdx(prev => prev + 1);
     } else {
-      // Finished questions
       setLoadingMessage(true);
       const message = await generateMotivationalMessage(newAnswers);
       setDailyMessage(message);
@@ -165,7 +163,7 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Renderers for each phase ---
+  // --- Renderers ---
 
   const renderWelcome = () => (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-8 animate-fade-in">
@@ -408,7 +406,6 @@ const App: React.FC = () => {
       </div>
 
       <div className="space-y-4">
-        {/* Force Level Badge */}
         <div className={`p-3 rounded border-l-4 ${FORCE_LEVEL_DETAILS[report.forceLevel].borderColor} bg-[#1C1C1E]`}>
            <span className="text-xs text-gray-400 uppercase block">Nível de Força Aplicado</span>
            <span className={`font-bold font-['Montserrat'] ${FORCE_LEVEL_DETAILS[report.forceLevel].color}`}>
@@ -416,7 +413,6 @@ const App: React.FC = () => {
            </span>
         </div>
 
-        {/* Legal Justification */}
         <TacticalCard>
            <div className="flex items-center gap-2 mb-2 text-[#C5A059]">
               <ShieldCheck size={16} />
@@ -427,7 +423,6 @@ const App: React.FC = () => {
            </p>
         </TacticalCard>
 
-        {/* Comparison: Original vs Refined */}
         <div className="grid gap-4">
           <div className="p-4 rounded bg-[#0A0A0A] border border-gray-800">
              <span className="text-xs text-gray-500 uppercase block mb-2">Seu Relato (Bruto)</span>
@@ -435,7 +430,6 @@ const App: React.FC = () => {
           </div>
 
           <div className="p-4 rounded bg-[#1C1C1E] border border-[#C5A059]/40 relative overflow-hidden">
-             {/* Decorative seal watermark */}
              <div className="absolute -right-4 -top-4 opacity-5 pointer-events-none">
                 <ShieldCheck size={100} />
              </div>
@@ -453,13 +447,9 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex gap-3 mt-6">
-           <TacticalButton variant="secondary" className="flex-1">
-              <Share size={18} /> Copiar
-           </TacticalButton>
-           <TacticalButton className="flex-1">
-              <Download size={18} /> PDF
+           <TacticalButton fullWidth onClick={handleCopy}>
+              <Share size={18} /> Copiar Relatório Tático
            </TacticalButton>
         </div>
         
@@ -474,7 +464,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#050505] text-gray-200 font-sans selection:bg-[#C5A059] selection:text-black">
-      {/* Top Sticky Bar */}
       <header className="sticky top-0 z-50 bg-[#050505]/95 backdrop-blur-md border-b border-[#1C1C1E] px-4 py-3 flex justify-between items-center">
         <div className="flex items-center gap-2">
            <div className="w-8 h-8 bg-[#1C1C1E] rounded flex items-center justify-center border border-[#C5A059]/20">
@@ -502,7 +491,6 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content Area */}
       <main className="max-w-md mx-auto p-5 pb-10">
         {phase === AppPhase.WELCOME && renderWelcome()}
         {phase === AppPhase.MOOD_CHECK && renderMoodCheck()}
@@ -512,7 +500,6 @@ const App: React.FC = () => {
         {phase === AppPhase.PROCESSING && renderProcessing()}
         {phase === AppPhase.RESULT && renderResult()}
 
-        {/* Global Disclaimer */}
         {phase !== AppPhase.MOOD_CHECK && <Disclaimer />}
       </main>
     </div>
