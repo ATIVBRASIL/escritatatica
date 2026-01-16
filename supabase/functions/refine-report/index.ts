@@ -12,34 +12,29 @@ serve(async (req) => {
   }
 
   try {
-    const { rawDescription, forceLevel } = await req.json()
+    const { prompt, forceLevel } = await req.json()
     const apiKey = Deno.env.get('GEMINI_API_KEY')
 
-    // 2. Chamada de Inteligência ao Gemini (Blindada no Servidor)
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`, {
+    // 2. Chamada para a API do Gemini
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `Aja como um especialista jurídico em segurança privada. Refine este relato operacional: "${rawDescription}". Nível de força utilizado: ${forceLevel}. Retorne um texto técnico e fundamentado.`
-          }]
-        }]
+        contents: [{ parts: [{ text: `Aja como um oficial experiente. Refine este relato técnico policial: ${prompt}. Nível de força: ${forceLevel}` }] }]
       })
     })
 
-    const data = await response.json()
-    const refinedText = data.candidates[0].content.parts[0].text
+    const result = await response.json()
+    const refinedText = result.candidates[0].content.parts[0].text
 
-    return new Response(JSON.stringify({ refinedDescription: refinedText }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
-
+    return new Response(
+      JSON.stringify({ refinedText }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   }
 })
