@@ -1,7 +1,15 @@
 import { GoogleGenAI } from "@google/genai";
 import { ForceLevel, FORCE_LEVEL_DETAILS } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// CORREÇÃO: Em Vite, usamos import.meta.env e o nome que definimos no deploy.yml
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY_ESCRITAAPP;
+
+// Verificação de segurança para o console
+if (!apiKey) {
+  console.error("ERRO: Chave de API não encontrada. Verifique as configurações do GitHub Secrets.");
+}
+
+const ai = new GoogleGenAI({ apiKey: apiKey });
 
 export const refineIncidentReport = async (
   rawText: string,
