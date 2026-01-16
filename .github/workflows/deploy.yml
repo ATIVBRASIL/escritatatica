@@ -19,13 +19,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          # Removi a linha 'cache' que estava causando o erro
       - name: Install dependencies
         run: npm install
       - name: Build
         run: npm run build
         env:
-          # Isso injeta sua chave secreta durante a criação do site
           VITE_GEMINI_API_KEY: ${{ secrets.ESCRITA_GEMINI_API_KEY }}
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
