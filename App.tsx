@@ -10,15 +10,23 @@ import {
   RotateCcw,
   Share,
   HeartHandshake,
-  X
+  X,
+  Loader2,
+  LogOut
 } from 'lucide-react';
+
+// Importações de Componentes e Serviços
 import { COLORS, APP_STRINGS } from './constants';
 import { TacticalButton, TacticalCard, Header, Disclaimer } from './components/TacticalComponents';
 import { ForceScale } from './components/ForceScale';
 import { ForceLevel, IncidentReport, FORCE_LEVEL_DETAILS } from './types';
 import { refineIncidentReport, generateMotivationalMessage } from './services/geminiService';
 
-// --- Phases of the Application ---
+// Infraestrutura Supabase e Autenticação
+import { supabase } from './supabaseClient';
+import { Auth } from './Auth';
+
+// --- Fases da Aplicação ---
 enum AppPhase {
   WELCOME,
   MOOD_CHECK, 
@@ -29,25 +37,13 @@ enum AppPhase {
   RESULT
 }
 
-const MOOD_QUESTIONS = [
-  {
-    question: "Como está seu nível de energia combativa (mental/física) agora?",
-    options: ["Alta / Pronto para tudo", "Média / Operacional", "Baixa / Cansado", "Exausto / Preciso de Força"]
-  },
-  {
-    question: "Qual o principal 'inimigo' interno você enfrenta hoje?",
-    options: ["Ansiedade / Medo", "Estresse Financeiro/Familiar", "Tédio / Falta de Propósito", "Nenhum / Foco Total"]
-  },
-  {
-    question: "Que tipo de munição mental você precisa?",
-    options: ["Coragem / Bravura", "Paciência / Sabedoria", "Disciplina / Foco", "Esperança / Fé"]
-  }
-];
-
-// ... (imports permanecem os mesmos)
-
 const App: React.FC = () => {
-  // --- State ---
+  // --- Estados de Sessão e Perfil ---
+  const [session, setSession] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<{ is_active: boolean, daily_usage: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // --- Estados de Operação ---
   const [phase, setPhase] = useState<AppPhase>(AppPhase.WELCOME);
   const [report, setReport] = useState<IncidentReport>({
     timestamp: new Date().toISOString(),
@@ -58,121 +54,175 @@ const App: React.FC = () => {
     refinedDescription: '',
     legalJustification: ''
   });
-  
-  // Novo estado para controle de uso (Prevenção de Abuso)
-  const [dailyUsageCount, setDailyUsageCount] = useState(0); 
-  const DAILY_LIMIT = 5;
-  const CHAR_LIMIT = 2000;
 
-  // ... (Efeito de geolocalização permanece igual) [cite: 19, 20]
+  const DAILY_LIMIT = 5; // Limite de munição diária
+  const CHAR_LIMIT = 2000; // Trava de caracteres
 
-  // REMOVIDO: handlePanic [cite: 21]
+  // --- Monitoramento de Acesso (Vigilância de Sessão) ---
+  useEffect(() => {
+    // 1. Checa sessão inicial
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) fetchProfile(session.user.id);
+      else setLoading(false);
+    });
 
+    // 2. Escuta mudanças de estado (Login/Logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) fetchProfile(session.user.id);
+      else {
+        setUserProfile(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchProfile = async (userId: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('is_active, daily_usage')
+      .eq('id', userId)
+      .single();
+    
+    if (data) setUserProfile(data);
+    setLoading(false);
+  };
+
+  // --- Lógica de Processamento com IA ---
   const processReport = async () => {
-    if (dailyUsageCount >= DAILY_LIMIT) {
-      alert("Limite operacional diário atingido (5/5).");
+    if (!userProfile?.is_active) {
+      alert("Acesso restrito. Assinatura pendente.");
+      return;
+    }
+
+    if (userProfile.daily_usage >= DAILY_LIMIT) {
+      alert("Limite de 5 relatos diários atingido.");
       return;
     }
     
     setPhase(AppPhase.PROCESSING);
-    const refinedText = await refineIncidentReport(report.rawDescription, report.forceLevel);
-    setReport(prev => ({
-      ...prev,
-      refinedDescription: refinedText,
-      legalJustification: FORCE_LEVEL_DETAILS[prev.forceLevel].legal
-    }));
     
-    setDailyUsageCount(prev => prev + 1); // Incrementa o uso
-    setPhase(AppPhase.RESULT);
+    try {
+      const refinedText = await refineIncidentReport(report.rawDescription, report.forceLevel);
+      
+      // Gasta 1 "munição" no banco de dados
+      const nextUsage = userProfile.daily_usage + 1;
+      await supabase
+        .from('profiles')
+        .update({ daily_usage: nextUsage })
+        .eq('id', session.user.id);
+
+      setUserProfile({ ...userProfile, daily_usage: nextUsage });
+      
+      setReport(prev => ({
+        ...prev,
+        refinedDescription: refinedText,
+        legalJustification: FORCE_LEVEL_DETAILS[prev.forceLevel].legal
+      }));
+      
+      setPhase(AppPhase.RESULT);
+    } catch (error) {
+      alert("Erro ao processar. Tente novamente.");
+      setPhase(AppPhase.INCIDENT_DETAILS);
+    }
   };
 
-  // ... (handleCopy, toggleMic, handleReset permanecem iguais) [cite: 24, 26, 28]
-
-  // --- Renderers Atualizados ---
-
+  // --- Interface de Entrada de Dados ---
   const renderDetailsInput = () => (
     <div className="animate-slide-up">
-      <Header title="Relato do Incidente" subtitle="Descreva os fatos de forma direta" />
+      <Header title="Relato do Incidente" subtitle="Descreva os fatos com precisão" />
 
       <TacticalCard className="mb-6">
         <div className="flex justify-between items-center mb-2">
-          <label className="block text-[#C5A059] text-xs font-bold uppercase">Entrevista Tática Digital</label>
-          {/* Contador de Caracteres Implementado */}
+          <label className="block text-[#C5A059] text-xs font-bold uppercase tracking-widest">Relato Técnico</label>
           <span className={`text-[10px] font-mono ${report.rawDescription.length >= CHAR_LIMIT ? 'text-red-500' : 'text-gray-500'}`}>
             {report.rawDescription.length} / {CHAR_LIMIT}
           </span>
         </div>
         
-        <div className="mb-4">
-           <p className="text-sm text-gray-400 mb-2 italic">"Relate a agressão injusta. O meio utilizado foi moderado?"</p>
-        </div>
-
         <textarea
-          className="w-full h-40 bg-black/50 border border-gray-700 rounded p-4 text-white focus:border-[#C5A059] focus:outline-none resize-none font-['Inter']"
-          placeholder="Ex: Eu estava no posto quando o indivíduo tentou entrar..."
+          className="w-full h-40 bg-black/50 border border-gray-700 rounded p-4 text-white focus:border-[#C5A059] focus:outline-none resize-none"
+          placeholder="Ex: Durante patrulhamento no setor Alpha..."
           value={report.rawDescription}
-          maxLength={CHAR_LIMIT} // Trava de 2.000 caracteres 
+          maxLength={CHAR_LIMIT}
           onChange={(e) => setReport(prev => ({ ...prev, rawDescription: e.target.value }))}
         ></textarea>
 
-        <div className="mt-4 flex justify-between items-center">
-          <span className="text-xs text-gray-500 flex items-center gap-1">
-            <MapPin size={12} /> {report.location ?
-            `${report.location.lat.toFixed(4)}, ${report.location.lng.toFixed(4)}` : "Buscando GPS..."}
-          </span>
-          <button 
-            onClick={toggleMic}
-            className={`p-3 rounded-full transition-colors ${isListening ?
-            'bg-red-900/50 text-red-500 animate-pulse' : 'bg-gray-800 text-[#C5A059] hover:bg-gray-700'}`}
-          >
-            <Mic size={20} />
-          </button>
+        <div className="mt-3 flex justify-between items-center text-[10px] uppercase font-bold">
+           <span className="text-gray-500">Munição: {DAILY_LIMIT - (userProfile?.daily_usage || 0)}/5</span>
+           {userProfile?.is_active ? 
+             <span className="text-green-500">Acesso Liberado</span> : 
+             <span className="text-red-500">Assinatura Pendente</span>}
         </div>
       </TacticalCard>
 
       <TacticalButton 
         fullWidth 
-        disabled={report.rawDescription.length < 10 || dailyUsageCount >= DAILY_LIMIT}
-        className={(report.rawDescription.length < 10 || dailyUsageCount >= DAILY_LIMIT) ? 'opacity-50' : ''}
+        disabled={report.rawDescription.length < 10 || (userProfile?.daily_usage || 0) >= DAILY_LIMIT || !userProfile?.is_active}
         onClick={processReport}
       >
-        {dailyUsageCount >= DAILY_LIMIT ? "Limite Diário Atingido" : "Processar com IA"} <FileText size={18} />
+        {(!userProfile?.is_active) ? "Assine para Processar" : 
+         ((userProfile?.daily_usage || 0) >= DAILY_LIMIT ? "Munição Esgotada" : "Gerar Relatório IA")} 
+        <FileText size={18} className="ml-2" />
       </TacticalButton>
-      
-      {dailyUsageCount >= DAILY_LIMIT && (
-        <p className="text-center text-red-500 text-[10px] mt-2 uppercase font-bold tracking-tighter">
-          Atingiu o limite de 5 relatos hoje.
-        </p>
-      )}
     </div>
   );
 
+  // --- Controle de Fluxo de Visualização ---
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
+        <Loader2 className="animate-spin text-[#C5A059]" size={40} />
+      </div>
+    );
+  }
+
+  // Se não houver sessão ativa, exibe o Portão de Login
+  if (!session) {
+    return <Auth />;
+  }
+
+  // Se logado, exibe a Interface Operacional
   return (
-    <div className="min-h-screen bg-[#050505] text-gray-200 font-sans selection:bg-[#C5A059] selection:text-black">
+    <div className="min-h-screen bg-[#050505] text-gray-200 font-sans">
       <header className="sticky top-0 z-50 bg-[#050505]/95 backdrop-blur-md border-b border-[#1C1C1E] px-4 py-3 flex justify-between items-center">
         <div className="flex items-center gap-2">
-           <div className="w-8 h-8 bg-[#1C1C1E] rounded flex items-center justify-center border border-[#C5A059]/20">
-              <ShieldCheck size={18} color={COLORS.AGED_GOLD} />
-           </div>
-           <span className="font-['Montserrat'] font-bold text-sm tracking-wider">ATIV</span>
+           <ShieldCheck size={18} color={COLORS.AGED_GOLD} />
+           <span className="font-bold text-sm tracking-wider">ATIV</span>
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <a 
-            href="https://ativbrasil.com.br/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-green-900/20 text-green-500 border border-green-500/50 px-3 py-1 rounded text-xs font-bold uppercase tracking-wide hover:bg-green-600 hover:text-white transition-all text-center"
+            href="https://ativbrasil.com.br/" 
+            target="_blank" 
+            className="text-[10px] font-bold text-green-500 uppercase border border-green-500/30 px-2 py-1 rounded"
           >
-             Treinamentos
+            Cursos
           </a>
-
-          {/* O BOTÃO SOS FOI REMOVIDO DAQUI [cite: 73, 74] */}
+          <button onClick={() => supabase.auth.signOut()} className="text-gray-500 hover:text-red-500 transition-colors">
+            <LogOut size={18} />
+          </button>
         </div>
       </header>
 
       <main className="max-w-md mx-auto p-5 pb-10">
-        {/* ... (as fases de renderização permanecem as mesmas) [cite: 75] */}
+        <div className="mb-4 text-center">
+          <p className="text-[10px] text-gray-600 uppercase tracking-widest font-bold">
+            Operador: {session.user.email}
+          </p>
+        </div>
+
+        {phase === AppPhase.INCIDENT_DETAILS ? renderDetailsInput() : (
+          <div className="text-center py-10 animate-fade-in">
+            <h2 className="text-white font-bold text-xl mb-6">Pronto para a Missão?</h2>
+            <TacticalButton fullWidth onClick={() => setPhase(AppPhase.INCIDENT_DETAILS)}>
+              Iniciar Escrita Tática <ArrowRight size={18} className="ml-2" />
+            </TacticalButton>
+          </div>
+        )}
       </main>
     </div>
   );
