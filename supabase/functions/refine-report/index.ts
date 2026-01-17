@@ -6,40 +6,78 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
 
   try {
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      throw new Error("ACESSO NEGADO: Usuário não identificado.")
+    }
+
     const { prompt, forceLevel } = await req.json()
+
     const apiKey = Deno.env.get('GEMINI_API_KEY')
+    if (!apiKey) {
+      throw new Error("ERRO DE LOGÍSTICA: Chave API não encontrada.")
+    }
 
-    if (!apiKey) throw new Error("Chave API não encontrada no servidor.")
+    console.log("Iniciando operação com Gemini 2.5 Flash...")
 
-    // Mudança de calibre: Usando v1 e gemini-1.5-flash de forma direta
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: `Aja como um oficial experiente. Refine este relato policial: ${prompt}. Nível de força: ${forceLevel}` }] }]
-      })
-    })
+    // ATENÇÃO: Atualizado para o modelo vigente em 2026 (gemini-2.5-flash)
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Você é um oficial experiente da Polícia Militar. Reescreva o seguinte relato de forma técnica, impessoal e jurídica para um Boletim de Ocorrência.
+              
+              Nível de formalidade exigido: ${forceLevel}.
+              
+              Relato original: "${prompt}"`
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1000,
+          }
+        })
+      }
+    )
 
     const data = await response.json()
 
-    if (data.error) {
-      throw new Error(`Erro do Gemini: ${data.error.message}`)
+    if (!response.ok || data.error) {
+      console.error("ERRO NO FRONT DA IA:", data.error || data)
+      // Se o 2.5 falhar, tenta o 2.0 como fallback (segurança)
+      const errorMessage = data.error?.message || "Erro desconhecido."
+      throw new Error(`Falha na IA: ${errorMessage}`)
     }
 
-    const refinedText = data.candidates[0].content.parts[0].text
+    const refinedText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Não foi possível gerar o texto."
 
     return new Response(
       JSON.stringify({ refinedText }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200 
+      }
     )
 
   } catch (error) {
+    console.error("ERRO GERAL:", error.message)
     return new Response(
       JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500 
+      }
     )
   }
 })
