@@ -1,12 +1,52 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { 
-  Users, CheckCircle, XCircle, RefreshCcw, ArrowLeft, 
+import {
+  Users, CheckCircle, XCircle, RefreshCcw, ArrowLeft,
   Loader2, Download, Upload, UserPlus, Trash2, CheckSquare, Square, Calendar, FileEdit, Clock
 } from 'lucide-react';
 import { TacticalButton, TacticalCard } from './components/TacticalComponents';
 
 interface AdminPanelProps { onBack: () => void; }
+
+/**
+ * Normaliza qualquer formato comum de data para "YYYY-MM-DD" (compatível com <input type="date">).
+ * Aceita:
+ * - "YYYY-MM-DD"
+ * - "YYYY-MM-DDTHH:mm:ss..."
+ * - "DD/MM/YYYY" ou "DD/MM/YY" (assume 20xx quando YY)
+ * - Date ou timestamp
+ */
+const toISODate = (v: any): string => {
+  if (!v) return '';
+
+  if (typeof v === 'string') {
+    // Já está no formato esperado pelo input
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+
+    // ISO com hora -> corta para YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}T/.test(v)) return v.slice(0, 10);
+
+    // BR: DD/MM/YYYY ou DD/MM/YY
+    if (/^\d{2}\/\d{2}\/\d{2,4}$/.test(v)) {
+      const [dd, mm, yyRaw] = v.split('/');
+      const yyyy = yyRaw.length === 2 ? `20${yyRaw}` : yyRaw; // assume século 2000
+      return `${yyyy}-${mm}-${dd}`;
+    }
+  }
+
+  // Tenta converter como Date (Date, timestamp, string parseável)
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString().slice(0, 10);
+};
+
+/** Exibe ISO "YYYY-MM-DD" como "DD/MM/AAAA" */
+const formatDateBR = (v: any): string => {
+  const iso = toISODate(v);
+  if (!iso) return '---';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -48,7 +88,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             <Upload size={14} className="mr-2" /> Importar CSV
           </TacticalButton>
           <input type="file" ref={fileInputRef} className="hidden" accept=".csv" />
-          
+
           <TacticalButton onClick={() => {}} variant="outline" className="text-[10px]">
             <Download size={14} className="mr-2" /> Exportar Lista
           </TacticalButton>
@@ -57,7 +97,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             <UserPlus size={14} className="mr-2" /> + Recrutar
           </TacticalButton>
 
-          <TacticalButton onClick={() => {}} disabled={selectedIds.length === 0} className={`text-[10px] ${selectedIds.length > 0 ? 'bg-red-900/40 text-red-500' : 'opacity-30'}`}>
+          <TacticalButton
+            onClick={() => {}}
+            disabled={selectedIds.length === 0}
+            className={`text-[10px] ${selectedIds.length > 0 ? 'bg-red-900/40 text-red-500' : 'opacity-30'}`}
+          >
             <Trash2 size={14} className="mr-2" /> Excluir ({selectedIds.length})
           </TacticalButton>
         </div>
@@ -76,12 +120,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
 
                   <div className="flex-1">
                     <p className="text-white font-bold text-xs mb-1">{profile.email}</p>
+
                     <div className="flex flex-wrap gap-4 text-[9px] uppercase font-bold text-gray-500">
-                      <span className="flex items-center gap-1"><Clock size={12}/> Visto: {profile.last_active_at ? new Date(profile.last_active_at).toLocaleDateString() : '---'}</span>
-                      <span className="flex items-center gap-1"><Calendar size={12}/> Expira: 
-                        <input 
-                          type="date" 
-                          value={profile.expires_at || ''} 
+                      <span className="flex items-center gap-1">
+                        <Clock size={12} />
+                        Visto: {profile.last_active_at ? new Date(profile.last_active_at).toLocaleDateString() : '---'}
+                      </span>
+
+                      {/* AJUSTE AQUI: exibição BR + input sempre em ISO */}
+                      <span className="flex items-center gap-1">
+                        <Calendar size={12} />
+                        Expira: {formatDateBR(profile.expires_at)}
+                        <input
+                          type="date"
+                          value={toISODate(profile.expires_at)}
                           onChange={(e) => updateProfileField(profile.id, 'expires_at', e.target.value)}
                           className="bg-transparent border-none text-[#C5A059] focus:outline-none cursor-pointer"
                         />
@@ -103,15 +155,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   <div className="flex items-center gap-4 w-full md:w-auto">
                     <div className="flex-1 md:w-48 relative">
                       <FileEdit size={12} className="absolute left-2 top-2 text-gray-600" />
-                      <input 
+                      <input
                         placeholder="Notas Administrativas..."
                         value={profile.admin_notes || ''}
                         onBlur={(e) => updateProfileField(profile.id, 'admin_notes', (e.target as HTMLInputElement).value)}
                         className="w-full bg-black/40 border border-gray-800 rounded p-1.5 pl-7 text-[10px] focus:border-[#C5A059] outline-none text-white"
                       />
                     </div>
-                    
-                    <button 
+
+                    <button
                       onClick={() => updateProfileField(profile.id, 'is_active', !profile.is_active)}
                       className={`px-4 py-2 rounded text-[10px] font-bold uppercase transition-all ${profile.is_active ? 'bg-green-900/20 text-green-500 border border-green-500/30' : 'bg-red-900/20 text-red-500 border border-red-500/30'}`}
                     >
