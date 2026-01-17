@@ -91,7 +91,7 @@ async function generateWithModel(params: {
       contents: [{ parts: [{ text }] }],
       generationConfig: {
         temperature: 0.35, // mais técnico/objetivo (menos “prosa”)
-        maxOutputTokens: 2500,
+        maxOutputTokens: 4500,
       },
     }),
   });
