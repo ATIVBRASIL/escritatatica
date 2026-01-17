@@ -289,7 +289,7 @@ const App: React.FC = () => {
               <Settings size={12} /> Painel CMD
             </button>
           )}
-          <a href="https://ativbrasil.com.br/" target="_blank" rel="noreferrer" className="text-[10px] font-bold text-green-500 uppercase border border-green-500/30 px-2 py-1 rounded">Cursos</a>
+          <a href="https://treinamentos.ativbrasil.com.br/" target="_blank" rel="noreferrer" className="text-[10px] font-bold text-green-500 uppercase border border-green-500/30 px-2 py-1 rounded">Cursos</a>
           <button onClick={() => supabase.auth.signOut()} className="text-gray-500 hover:text-red-500 transition-colors"><LogOut size={18} /></button>
         </div>
       </header>
