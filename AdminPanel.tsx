@@ -8,45 +8,91 @@ import { TacticalButton, TacticalCard } from './components/TacticalComponents';
 
 interface AdminPanelProps { onBack: () => void; }
 
-/**
- * Normaliza qualquer formato comum de data para "YYYY-MM-DD" (compatível com <input type="date">).
- * Aceita:
- * - "YYYY-MM-DD"
- * - "YYYY-MM-DDTHH:mm:ss..."
- * - "DD/MM/YYYY" ou "DD/MM/YY" (assume 20xx quando YY)
- * - Date ou timestamp
- */
+// --- UTILITÁRIOS ---
+
+/** Normaliza para ISO YYYY-MM-DD para garantir consistência */
 const toISODate = (v: any): string => {
   if (!v) return '';
-
   if (typeof v === 'string') {
-    // Já está no formato esperado pelo input
     if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-
-    // ISO com hora -> corta para YYYY-MM-DD
     if (/^\d{4}-\d{2}-\d{2}T/.test(v)) return v.slice(0, 10);
-
-    // BR: DD/MM/YYYY ou DD/MM/YY
-    if (/^\d{2}\/\d{2}\/\d{2,4}$/.test(v)) {
-      const [dd, mm, yyRaw] = v.split('/');
-      const yyyy = yyRaw.length === 2 ? `20${yyRaw}` : yyRaw; // assume século 2000
-      return `${yyyy}-${mm}-${dd}`;
-    }
   }
-
-  // Tenta converter como Date (Date, timestamp, string parseável)
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '';
   return d.toISOString().slice(0, 10);
 };
 
-/** Exibe ISO "YYYY-MM-DD" como "DD/MM/AAAA" */
-const formatDateBR = (v: any): string => {
-  const iso = toISODate(v);
-  if (!iso) return '---';
-  const [y, m, d] = iso.split('-');
-  return `${d}/${m}/${y}`;
+// --- NOVO COMPONENTE: EDITOR DE DATA COM MÁSCARA ---
+
+const DateEditor = ({ 
+  initialValue, 
+  onSave 
+}: { 
+  initialValue: any, 
+  onSave: (isoDate: string | null) => void 
+}) => {
+  // Converte o valor do banco (ISO) para visual (DD/MM/AAAA)
+  const formatToDisplay = (iso: string) => {
+    if (!iso) return '';
+    const datePart = iso.split('T')[0];
+    const [y, m, d] = datePart.split('-');
+    return (y && m && d) ? `${d}/${m}/${y}` : '';
+  };
+
+  const [value, setValue] = useState(formatToDisplay(toISODate(initialValue)));
+
+  // Atualiza o estado local se o valor inicial mudar externamente
+  useEffect(() => {
+    setValue(formatToDisplay(toISODate(initialValue)));
+  }, [initialValue]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let v = e.target.value.replace(/\D/g, ''); // Apenas números
+    if (v.length > 8) v = v.slice(0, 8); // Limite de caracteres
+
+    // Máscara DD/MM/AAAA
+    if (v.length > 4) {
+      v = `${v.slice(0, 2)}/${v.slice(2, 4)}/${v.slice(4)}`;
+    } else if (v.length > 2) {
+      v = `${v.slice(0, 2)}/${v.slice(2)}`;
+    }
+    setValue(v);
+  };
+
+  const handleBlur = () => {
+    // Se estiver vazio, salva como null
+    if (!value) {
+      onSave(null);
+      return;
+    }
+
+    // Valida formato completo DD/MM/AAAA
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
+      const [d, m, y] = value.split('/');
+      const isoDate = `${y}-${m}-${d}`;
+      // Só dispara o save se mudou
+      if (isoDate !== toISODate(initialValue)) {
+        onSave(isoDate);
+      }
+    } else {
+      // Se formato inválido, reverte para o original
+      setValue(formatToDisplay(toISODate(initialValue)));
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      placeholder="DD/MM/AAAA"
+      className="bg-transparent border-b border-gray-800 text-[#C5A059] focus:border-[#C5A059] focus:outline-none cursor-text w-24 text-center tracking-wide placeholder-gray-700 hover:border-gray-600 transition-colors"
+    />
+  );
 };
+
+// --- COMPONENTE PRINCIPAL ---
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -127,15 +173,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                         Visto: {profile.last_active_at ? new Date(profile.last_active_at).toLocaleDateString() : '---'}
                       </span>
 
-                      {/* AJUSTE AQUI: exibição BR + input sempre em ISO */}
+                      {/* --- ALTERAÇÃO AQUI: Data com Máscara e Edição Direta --- */}
                       <span className="flex items-center gap-1">
                         <Calendar size={12} />
-                        Expira: {formatDateBR(profile.expires_at)}
-                        <input
-                          type="date"
-                          value={toISODate(profile.expires_at)}
-                          onChange={(e) => updateProfileField(profile.id, 'expires_at', e.target.value)}
-                          className="bg-transparent border-none text-[#C5A059] focus:outline-none cursor-pointer"
+                        Expira: 
+                        <DateEditor 
+                          initialValue={profile.expires_at}
+                          onSave={(newValue) => updateProfileField(profile.id, 'expires_at', newValue)}
                         />
                       </span>
                     </div>
