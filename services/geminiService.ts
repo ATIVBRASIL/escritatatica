@@ -1,38 +1,54 @@
-import { supabase } from '../supabaseClient';
 import { ForceLevel } from '../types';
 
-// Função principal de reescrita
-export const refineIncidentReport = async (text: string, level: ForceLevel) => {
-  try {
-    console.log("Enviando para o QG:", text.substring(0, 20) + "...");
+// ⚠️ URL DA EDGE FUNCTION (fixa)
+const FUNCTION_URL =
+  "https://dbbzehyummpjyedxmsme.supabase.co/functions/v1/refine-report";
 
-    // O segredo está aqui: body: { prompt: text, ... }
-    // Isso garante que o backend receba na variável 'prompt' correta.
-    const { data, error } = await supabase.functions.invoke('refine-report', {
-      body: { 
-        prompt: text, 
-        forceLevel: level 
-      }
+// ⚠️ ANON KEY (publica, segura para frontend)
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRiYnplaHl1bW1wanllZHhtc21lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1Njc4MTMsImV4cCI6MjA4NDE0MzgxM30.sFH5-IG1ZmUh5OpXZrsg0aogm-Qt2CyF6eyrCaGAOlQ";
+
+export const refineIncidentReport = async (
+  text: string,
+  level: ForceLevel
+) => {
+  try {
+    console.log("Enviando para o QG:", text.substring(0, 40) + "...");
+
+    const response = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // ✅ AUTORIZAÇÃO EXPLÍCITA
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        prompt: text,
+        forceLevel: level,
+      }),
     });
 
-    if (error) {
-      console.error("Erro do Supabase Functions:", error);
-      throw new Error(error.message || 'Falha na comunicação com o servidor');
+    if (!response.ok) {
+      const raw = await response.text();
+      console.error("Resposta bruta:", raw);
+      throw new Error(`Erro HTTP ${response.status}: ${raw}`);
     }
 
-    if (!data || !data.refinedText) {
-      throw new Error('A IA não retornou o texto refinado.');
+    const data = await response.json();
+
+    if (!data?.refinedText) {
+      console.error("Payload inesperado:", data);
+      throw new Error("Resposta inválida da Edge Function.");
     }
 
     return data.refinedText;
-
   } catch (error) {
     console.error("Falha Tática no Serviço:", error);
     throw error;
   }
 };
 
-// Função secundária (opcional, mantendo para não quebrar importações)
+// Mantida para compatibilidade
 export const generateMotivationalMessage = async () => {
   return "Mantenha o foco na missão. Sua segurança é prioridade.";
 };
