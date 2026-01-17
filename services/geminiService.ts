@@ -1,37 +1,38 @@
 import { supabase } from '../supabaseClient';
+import { ForceLevel } from '../types';
 
-export const refineIncidentReport = async (text: string, forceLevel: string) => {
+// Função principal de reescrita
+export const refineIncidentReport = async (text: string, level: ForceLevel) => {
   try {
-    // Pegando as coordenadas direto do cliente que configuramos
-    const { data: { publicUrl } } = { data: { publicUrl: 'https://dbbzehyummpjyedxmsme.supabase.co/functions/v1/refine-report' } };
-    const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRiYnplaHl1bW1wanllZHhtc21lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1Njc4MTMsImV4cCI6MjA4NDE0MzgxM30.sFH5-IG1ZmUh5OpXZrsg0aogm-Qt2CyF6eyrCaGAOlQ';
+    console.log("Enviando para o QG:", text.substring(0, 20) + "...");
 
-    console.log("Iniciando incursão no servidor...");
-
-    const response = await fetch(publicUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${anonKey}`, // Usando a chave que você me passou
-        'apikey': anonKey
-      },
-      body: JSON.stringify({ prompt: text, forceLevel: forceLevel })
+    // O segredo está aqui: body: { prompt: text, ... }
+    // Isso garante que o backend receba na variável 'prompt' correta.
+    const { data, error } = await supabase.functions.invoke('refine-report', {
+      body: { 
+        prompt: text, 
+        forceLevel: level 
+      }
     });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Erro na comunicação com o servidor');
+    if (error) {
+      console.error("Erro do Supabase Functions:", error);
+      throw new Error(error.message || 'Falha na comunicação com o servidor');
     }
 
-    const result = await response.json();
-    return result.refinedText;
+    if (!data || !data.refinedText) {
+      throw new Error('A IA não retornou o texto refinado.');
+    }
+
+    return data.refinedText;
 
   } catch (error) {
-    console.error("PANE NA COMUNICAÇÃO:", error);
+    console.error("Falha Tática no Serviço:", error);
     throw error;
   }
 };
 
-export const generateMotivationalMessage = () => {
-  return "Força e Honra, Tenente. O relatório está a caminho.";
+// Função secundária (opcional, mantendo para não quebrar importações)
+export const generateMotivationalMessage = async () => {
+  return "Mantenha o foco na missão. Sua segurança é prioridade.";
 };
