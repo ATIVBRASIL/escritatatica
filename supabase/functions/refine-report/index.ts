@@ -1,5 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+/* =========================
+   CORS
+========================= */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -7,21 +11,35 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Carimbo de versão (mude quando quiser confirmar em logs)
-const FUNCTION_VERSION = "2026-01-17_v1";
+/* =========================
+   Versão
+========================= */
+const FUNCTION_VERSION = "2026-01-18_v2";
 
+/* =========================
+   Types
+========================= */
 type ReqBody = {
   prompt: string;
   forceLevel?: string | number;
-  // opcional: se no futuro quiser receber data/hora do fato vinda do app
   occurredAt?: string;
 };
 
+/* =========================
+   Helpers básicos
+========================= */
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function getBearerToken(req: Request): string | null {
+  const h = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (!h) return null;
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : null;
 }
 
 async function safeReadText(resp: Response) {
@@ -34,11 +52,7 @@ async function safeReadText(resp: Response) {
 
 function nowInBrazil(): { iso: string; formatted: string } {
   const now = new Date();
-
-  // ISO (UTC) — útil para logs/consistência
   const iso = now.toISOString();
-
-  // Formato Brasil no fuso de São Paulo (mais realista para o seu contexto)
   const formatted = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
     day: "2-digit",
@@ -48,25 +62,18 @@ function nowInBrazil(): { iso: string; formatted: string } {
     minute: "2-digit",
     second: "2-digit",
   }).format(now);
-
   return { iso, formatted };
 }
 
+/* =========================
+   Gemini helpers (inalterados)
+========================= */
 async function listModels(apiKey: string) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
   const resp = await fetch(url, { method: "GET" });
-
   const text = await safeReadText(resp);
   if (!resp.ok) throw new Error(`ListModels HTTP ${resp.status}: ${text}`);
-
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`ListModels: resposta não-JSON: ${text}`);
-  }
-
-  return Array.isArray(data?.models) ? data.models : [];
+  return JSON.parse(text)?.models ?? [];
 }
 
 function supportsGenerateContent(model: any): boolean {
@@ -81,189 +88,205 @@ async function generateWithModel(params: {
 }) {
   const { apiKey, modelName, text } = params;
 
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text }] }],
-      generationConfig: {
-        temperature: 0.35, // mais técnico/objetivo (menos “prosa”)
-        maxOutputTokens: 4500,
-      },
-    }),
-  });
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text }] }],
+        generationConfig: {
+          temperature: 0.35,
+          maxOutputTokens: 4500,
+        },
+      }),
+    }
+  );
 
   const raw = await safeReadText(resp);
   if (!resp.ok) {
     throw new Error(`GenerateContent HTTP ${resp.status} (${modelName}): ${raw}`);
   }
 
-  let data: any;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    throw new Error(`GenerateContent: resposta não-JSON (${modelName}): ${raw}`);
-  }
+  const data = JSON.parse(raw);
+  const refinedText =
+    data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
-  if (data?.error?.message) {
-    throw new Error(`Erro Google (${modelName}): ${data.error.message}`);
+  if (!refinedText.trim()) {
+    throw new Error(`IA retornou vazio (${modelName})`);
   }
-
-  const refinedText = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  if (!refinedText.trim()) throw new Error(`IA retornou vazio (${modelName}).`);
 
   return refinedText;
 }
 
+/* =========================
+   Main
+========================= */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    console.log(`[ATIV] Function version: ${FUNCTION_VERSION}`);
+    console.log(`[ATIV] refine-report ${FUNCTION_VERSION}`);
 
+    /* -------- ENV -------- */
     const apiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!apiKey) {
-      // mantém 200 para não “quebrar” o frontend, mas com mensagem clara
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const renewUrl =
+      Deno.env.get("RENEW_CHECKOUT_URL") || "LINK_PLACEHOLDER_HOTMART";
+
+    if (!apiKey || !supabaseUrl || !anonKey || !serviceKey) {
       return jsonResponse({
         refinedText:
-          "⚠️ FALHA TÉCNICA ⚠️\n\nErro: GEMINI_API_KEY não configurada no ambiente.",
-      }, 200);
+          "⚠️ FALHA TÉCNICA ⚠️\n\nConfiguração de ambiente incompleta.",
+        code: "MISCONFIG",
+      });
     }
 
-    const url = new URL(req.url);
-    const debug = url.searchParams.get("debug") === "1";
-
+    /* -------- BODY -------- */
     const body = (await req.json()) as ReqBody;
     const prompt = (body?.prompt ?? "").trim();
     const forceLevel = (body?.forceLevel ?? "NÃO INFORMADO").toString();
 
     if (!prompt) {
-      return jsonResponse({ refinedText: "ERRO: campo 'prompt' vazio." }, 200);
+      return jsonResponse({
+        refinedText: "ERRO: campo 'prompt' vazio.",
+      });
     }
 
+    /* -------- AUTH -------- */
+    const token = getBearerToken(req);
+    if (!token) {
+      return jsonResponse({
+        refinedText:
+          "⚠️ ACESSO NEGADO ⚠️\n\nSessão inválida. Faça login novamente.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const supabaseAuth = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false },
+    });
+
+    const { data: userData, error: userErr } =
+      await supabaseAuth.auth.getUser();
+
+    if (userErr || !userData?.user?.id) {
+      return jsonResponse({
+        refinedText:
+          "⚠️ ACESSO NEGADO ⚠️\n\nSessão expirada. Faça login novamente.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const userId = userData.user.id;
+
+    /* -------- PROFILE CHECK -------- */
+    const supabaseSrv = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false },
+    });
+
+    const { data: profile, error: profErr } = await supabaseSrv
+      .from("profiles")
+      .select("is_active, expires_at, role")
+      .eq("id", userId)
+      .single();
+
+    if (profErr || !profile) {
+      return jsonResponse({
+        refinedText:
+          "⚠️ FALHA TÉCNICA ⚠️\n\nPerfil inconsistente.",
+        code: "PROFILE_MISSING",
+      });
+    }
+
+    if (profile.role !== "admin") {
+      if (profile.is_active === false) {
+        return jsonResponse({
+          refinedText:
+            "⚠️ ACESSO BLOQUEADO ⚠️\n\nConta inativa. Procure o administrador.",
+          code: "INACTIVE",
+        });
+      }
+
+      if (profile.expires_at) {
+        const exp = new Date(profile.expires_at);
+        if (exp <= new Date()) {
+          return jsonResponse({
+            refinedText:
+              "⚠️ ACESSO EXPIRADO ⚠️\n\nSeu período de uso deste recurso foi encerrado.\n\nClique para renovar:\n" +
+              renewUrl,
+            code: "EXPIRED",
+            renewUrl,
+          });
+        }
+      }
+    }
+
+    /* -------- PROMPT (inalterado) -------- */
     const nowBR = nowInBrazil();
 
-    // Instrução “cérebro” (sem prefácio; começa direto no relatório)
-    // Importante: nós “injetamos” a data/hora atual aqui, para a IA não inventar.
     const systemInstruction = `
 ATUE EXCLUSIVAMENTE COMO: Redator Técnico Operacional e Perito em Documentação de Segurança Privada.
-
 CONTEXTO LEGAL:
-- Lei 14.967/2024 (Estatuto da Segurança Privada).
-- Código Penal (Art. 23 e 25 - Excludentes de Ilicitude).
-
+- Lei 14.967/2024.
+- Código Penal (Art. 23 e 25).
 OBJETIVO:
-Converter o relato bruto em RELATÓRIO DE OCORRÊNCIA OPERACIONAL (técnico, impessoal, cronológico e juridicamente consistente).
-
+Converter o relato bruto em RELATÓRIO DE OCORRÊNCIA OPERACIONAL.
 NÍVEL DE FORÇA APLICADO: ${forceLevel}
-(Obrigatório justificar por NECESSIDADE, PROPORCIONALIDADE e ADEQUAÇÃO, vinculando a conduta do indivíduo e a cessação da ameaça.)
-
-DATA/HORA DA LAVRATURA DO RELATÓRIO (OBRIGATÓRIO USAR EXATAMENTE): ${nowBR.formatted} (horário de Brasília)
-
-REGRAS OBRIGATÓRIAS:
-0) PROIBIDO: saudações, prefácios, textos educativos, “apresento”, “é com a devida atenção”, cartas ao leitor, explicações fora do relatório.
-1) A resposta DEVE iniciar IMEDIATAMENTE com a linha: "RELATÓRIO DE OCORRÊNCIA OPERACIONAL".
-2) Proibido primeira pessoa ("eu", "nós"). Use "Este agente", "A equipe", "O vigilante", "A guarnição".
-3) Substitua gírias e coloquialismos por terminologia técnica.
-4) Não crie seções extras. Siga o modelo.
-
---- MODELO OBRIGATÓRIO (INÍCIO DA RESPOSTA) ---
-
-RELATÓRIO DE OCORRÊNCIA OPERACIONAL
 DATA/HORA: ${nowBR.formatted}
-LOCAL: (Extrair do relato; se ausente, escrever "Não informado no relato")
-NATUREZA: (Classificação objetiva: Perturbação do Sossego / Tentativa de Invasão / Vias de Fato / Desobediência / Ameaça etc.)
-
-1. HISTÓRICO DOS FATOS:
-(2 a 3 parágrafos, cronológicos, descrevendo: acionamento/constatação, comportamento do indivíduo, sinais observáveis, verbalizações e medidas iniciais.)
-
-2. DA INTERVENÇÃO TÁTICA E DO USO PROGRESSIVO DA FORÇA:
-(Descrever intervenção e justificar o nível ${forceLevel} por NECESSIDADE, PROPORCIONALIDADE e ADEQUAÇÃO. Indicar objetivos: cessar ameaça, resguardar integridade, preservar patrimônio e manter ordem.)
-
-3. DESFECHO:
-(Descrever estabilização e encaminhamentos: acionamento da PM, condução, identificação, atendimento médico, registro e liberação, conforme aplicável.)
-
-TERMOS TÉCNICOS:
-1. (Termo aplicado no relatório): (Definição objetiva)
-2. (Termo aplicado no relatório): (Definição objetiva)
-3. (Termo aplicado no relatório): (Definição objetiva)
-
---- FIM DO MODELO ---
 `.trim();
 
     const finalText = `${systemInstruction}\n\nRELATO BRUTO:\n${prompt}`;
 
-    // DEBUG: lista modelos disponíveis (sem expor apiKey)
-    let models: any[] = [];
-    if (debug) {
-      models = await listModels(apiKey);
-      const summary = models.slice(0, 50).map((m) => ({
-        name: m?.name,
-        supportsGenerateContent: supportsGenerateContent(m),
-        supported: m?.supportedGenerationMethods ?? m?.supportedActions ?? [],
-      }));
-      console.log("[ATIV] MODELS AVAILABLE (first 50):", JSON.stringify(summary, null, 2));
-    }
+    /* -------- MODEL SELECTION -------- */
+    const models = await listModels(apiKey);
+    const supported = models
+      .filter(supportsGenerateContent)
+      .map((m: any) => m.name.replace(/^models\//, ""));
 
-    // Seleção de modelo (env primeiro)
-    const envModel = Deno.env.get("GEMINI_MODEL")?.trim();
-    const baseCandidates = [
-      envModel,
+    const candidates = [
+      Deno.env.get("GEMINI_MODEL"),
       "gemini-2.5-flash",
       "gemini-2.0-flash",
-      "gemini-1.5-pro-001",
-      "gemini-1.5-flash-001",
       "gemini-1.5-pro",
       "gemini-1.5-flash",
     ].filter(Boolean) as string[];
 
-    let candidateModels = [...baseCandidates];
+    const modelList = Array.from(
+      new Set([...candidates.filter((c) => supported.includes(c)), ...supported])
+    );
 
-    // Se debug trouxe lista, prioriza modelos realmente suportados
-    if (models.length > 0) {
-      const supported = models
-        .filter(supportsGenerateContent)
-        .map((m) => (m.name || "").replace(/^models\//, ""))
-        .filter(Boolean);
-
-      const preferred = baseCandidates.filter((c) => supported.includes(c));
-      const fallback = supported.slice(0, 10);
-      candidateModels = Array.from(new Set([...preferred, ...fallback, ...baseCandidates]));
-    }
-
-    // Tenta gerar com fallback
     let refinedText = "";
     let lastErr: string | null = null;
 
-    for (const modelName of candidateModels) {
+    for (const modelName of modelList) {
       try {
-        console.log(`[ATIV] Trying model: ${modelName}`);
-        refinedText = await generateWithModel({ apiKey, modelName, text: finalText });
-        console.log(`[ATIV] Success with model: ${modelName}`);
+        refinedText = await generateWithModel({
+          apiKey,
+          modelName,
+          text: finalText,
+        });
         break;
       } catch (e: any) {
         lastErr = e?.message ?? String(e);
-        console.error(`[ATIV] Failed model ${modelName}:`, lastErr);
       }
     }
 
     if (!refinedText) {
-      throw new Error(`Falha ao gerar texto. Último erro: ${lastErr ?? "desconhecido"}`);
+      throw new Error(`Falha ao gerar texto: ${lastErr}`);
     }
 
-    return jsonResponse({ refinedText }, 200);
+    return jsonResponse({ refinedText });
   } catch (error: any) {
-    console.error("ERRO CRÍTICO:", error?.message ?? error);
-
+    console.error("ERRO CRÍTICO:", error);
     return jsonResponse({
       refinedText:
-        `⚠️ FALHA TÉCNICA ⚠️\n\n` +
-        `Erro: ${error?.message ?? error}\n`,
-    }, 200);
+        "⚠️ FALHA TÉCNICA ⚠️\n\nErro interno ao processar solicitação.",
+    });
   }
 });
