@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { decode as decodeJwt } from "https://deno.land/x/djwt@v2.9/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,11 +8,12 @@ const corsHeaders = {
 };
 
 // Carimbo de versão (mude quando quiser confirmar em logs)
-const FUNCTION_VERSION = "2026-01-18_v2";
+const FUNCTION_VERSION = "2026-01-17_v1";
 
 type ReqBody = {
   prompt: string;
   forceLevel?: string | number;
+  // opcional: se no futuro quiser receber data/hora do fato vinda do app
   occurredAt?: string;
 };
 
@@ -35,8 +35,10 @@ async function safeReadText(resp: Response) {
 function nowInBrazil(): { iso: string; formatted: string } {
   const now = new Date();
 
+  // ISO (UTC) — útil para logs/consistência
   const iso = now.toISOString();
 
+  // Formato Brasil no fuso de São Paulo (mais realista para o seu contexto)
   const formatted = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
     day: "2-digit",
@@ -48,22 +50,6 @@ function nowInBrazil(): { iso: string; formatted: string } {
   }).format(now);
 
   return { iso, formatted };
-}
-
-function getBearerToken(req: Request): string | null {
-  const auth = req.headers.get("authorization") || req.headers.get("Authorization");
-  if (!auth) return null;
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : null;
-}
-
-function getUserIdFromJwt(token: string): string | null {
-  try {
-    const payload: any = decodeJwt(token);
-    return payload?.sub ?? null;
-  } catch {
-    return null;
-  }
 }
 
 async function listModels(apiKey: string) {
@@ -104,7 +90,7 @@ async function generateWithModel(params: {
     body: JSON.stringify({
       contents: [{ parts: [{ text }] }],
       generationConfig: {
-        temperature: 0.35,
+        temperature: 0.35, // mais técnico/objetivo (menos “prosa”)
         maxOutputTokens: 4500,
       },
     }),
@@ -140,105 +126,12 @@ serve(async (req) => {
   try {
     console.log(`[ATIV] Function version: ${FUNCTION_VERSION}`);
 
-    // =========================
-    // AUTH (robusto)
-    // =========================
-    const token = getBearerToken(req);
-    if (!token) {
-      return jsonResponse({
-        refinedText: "⚠️ ACESSO NEGADO ⚠️\n\nSessão inválida. Faça login novamente.",
-        code: "UNAUTHORIZED",
-      }, 200);
-    }
-
-    const userId = getUserIdFromJwt(token);
-    if (!userId) {
-      return jsonResponse({
-        refinedText: "⚠️ ACESSO NEGADO ⚠️\n\nToken inválido. Faça login novamente.",
-        code: "UNAUTHORIZED",
-      }, 200);
-    }
-
-    // =========================
-    // Verifica perfil (service role)
-    // =========================
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-    if (!SUPABASE_URL || !SERVICE_ROLE) {
-      return jsonResponse({
-        refinedText:
-          "⚠️ FALHA TÉCNICA ⚠️\n\nErro: SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configuradas.",
-        code: "MISCONFIG",
-      }, 200);
-    }
-
-    // Busca profile diretamente via REST (service role) — evita RLS e evita validar JWT via auth.getUser()
-    const profResp = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`, {
-      method: "GET",
-      headers: {
-        apikey: SERVICE_ROLE,
-        Authorization: `Bearer ${SERVICE_ROLE}`,
-      },
-    });
-
-    const profRaw = await safeReadText(profResp);
-    if (!profResp.ok) {
-      return jsonResponse({
-        refinedText:
-          "⚠️ FALHA TÉCNICA ⚠️\n\nErro ao verificar perfil de acesso.",
-        code: "PROFILE_CHECK_FAILED",
-        debug: profRaw.slice(0, 400),
-      }, 200);
-    }
-
-    let profData: any[] = [];
-    try {
-      profData = JSON.parse(profRaw);
-    } catch {
-      profData = [];
-    }
-
-    const profile = Array.isArray(profData) ? profData[0] : null;
-
-    if (!profile) {
-      return jsonResponse({
-        refinedText:
-          "⚠️ ACESSO NEGADO ⚠️\n\nPerfil não encontrado. Procure o administrador.",
-        code: "NO_PROFILE",
-      }, 200);
-    }
-
-    // is_active
-    if (!profile?.is_active) {
-      return jsonResponse({
-        refinedText:
-          "⚠️ ACESSO RESTRITO ⚠️\n\nSua conta aguarda ativação pelo administrador.",
-        code: "INACTIVE",
-      }, 200);
-    }
-
-    // expires_at
-    const expiresAt = profile?.expires_at ? new Date(profile.expires_at) : null;
-    if (expiresAt && expiresAt.getTime() < Date.now()) {
-      const renewUrl = Deno.env.get("RENEW_URL") || "LINK_PLACEHOLDER_HOTMART";
-      return jsonResponse({
-        refinedText:
-          "⚠️ ACESSO EXPIRADO ⚠️\n\nAcesso expirado. Clique aqui para renovar.",
-        code: "EXPIRED",
-        renewUrl,
-      }, 200);
-    }
-
-    // =========================
-    // IA
-    // =========================
     const apiKey = Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) {
+      // mantém 200 para não “quebrar” o frontend, mas com mensagem clara
       return jsonResponse({
         refinedText:
           "⚠️ FALHA TÉCNICA ⚠️\n\nErro: GEMINI_API_KEY não configurada no ambiente.",
-        code: "MISCONFIG",
       }, 200);
     }
 
@@ -250,11 +143,13 @@ serve(async (req) => {
     const forceLevel = (body?.forceLevel ?? "NÃO INFORMADO").toString();
 
     if (!prompt) {
-      return jsonResponse({ refinedText: "ERRO: campo 'prompt' vazio.", code: "BAD_REQUEST" }, 200);
+      return jsonResponse({ refinedText: "ERRO: campo 'prompt' vazio." }, 200);
     }
 
     const nowBR = nowInBrazil();
 
+    // Instrução “cérebro” (sem prefácio; começa direto no relatório)
+    // Importante: nós “injetamos” a data/hora atual aqui, para a IA não inventar.
     const systemInstruction = `
 ATUE EXCLUSIVAMENTE COMO: Redator Técnico Operacional e Perito em Documentação de Segurança Privada.
 
@@ -315,6 +210,7 @@ TERMOS TÉCNICOS:
       console.log("[ATIV] MODELS AVAILABLE (first 50):", JSON.stringify(summary, null, 2));
     }
 
+    // Seleção de modelo (env primeiro)
     const envModel = Deno.env.get("GEMINI_MODEL")?.trim();
     const baseCandidates = [
       envModel,
@@ -328,6 +224,7 @@ TERMOS TÉCNICOS:
 
     let candidateModels = [...baseCandidates];
 
+    // Se debug trouxe lista, prioriza modelos realmente suportados
     if (models.length > 0) {
       const supported = models
         .filter(supportsGenerateContent)
@@ -339,6 +236,7 @@ TERMOS TÉCNICOS:
       candidateModels = Array.from(new Set([...preferred, ...fallback, ...baseCandidates]));
     }
 
+    // Tenta gerar com fallback
     let refinedText = "";
     let lastErr: string | null = null;
 
@@ -366,7 +264,6 @@ TERMOS TÉCNICOS:
       refinedText:
         `⚠️ FALHA TÉCNICA ⚠️\n\n` +
         `Erro: ${error?.message ?? error}\n`,
-      code: "CRITICAL",
     }, 200);
   }
 });

@@ -108,7 +108,7 @@ const App: React.FC = () => {
 
     // Atualiza o último acesso
     if (userId) {
-      await supabase.from('profiles').update({ last_active_at: new Date().toISOString() }).eq('id', userId);
+        await supabase.from('profiles').update({ last_active_at: new Date().toISOString() }).eq('id', userId);
     }
     setLoading(false);
   };
@@ -126,7 +126,7 @@ const App: React.FC = () => {
       return;
     }
 
-    if ((userProfile?.daily_usage_count || 0) >= DAILY_LIMIT) {
+    if (userProfile.daily_usage_count >= DAILY_LIMIT) {
       alert("❌ LIMITE DIÁRIO: Você já utilizou seus 5 relatos de hoje.");
       return;
     }
@@ -163,28 +163,8 @@ const App: React.FC = () => {
       
       setPhase(AppPhase.RESULT);
 
-    } catch (error: any) {
+    } catch (error) {
       console.error("Erro no processamento:", error);
-
-      // ✅ Fluxo novo: expiração (vem do geminiService.ts)
-      if (error?.code === "EXPIRED") {
-        const renewUrl = error?.renewUrl || "LINK_PLACEHOLDER_HOTMART";
-        const go = window.confirm(
-          "⚠️ ACESSO EXPIRADO\n\nSeu período de uso deste recurso foi encerrado.\n\nDeseja renovar agora?"
-        );
-        if (go) window.open(renewUrl, "_blank");
-        setPhase(AppPhase.INCIDENT_DETAILS);
-        return;
-      }
-
-      // ✅ Sessão inválida (token ausente/expirado)
-      if (String(error?.message || "").toLowerCase().includes("sessão")) {
-        alert("Sessão expirada. Faça login novamente.");
-        await supabase.auth.signOut();
-        return;
-      }
-
-      // ✅ Mantém comportamento antigo para qualquer outro erro
       alert("Erro ao processar. Tente novamente.");
       setPhase(AppPhase.INCIDENT_DETAILS);
     }

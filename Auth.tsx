@@ -11,70 +11,17 @@ export const Auth: React.FC = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loading) return;
-
     setLoading(true);
 
-    try {
-      const cleanEmail = email.trim().toLowerCase();
-
-      if (!cleanEmail) {
-        alert('Informe um e-mail válido.');
-        return;
-      }
-
-      if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-        });
-
-        if (error) {
-          console.error('[AUTH] signUp error:', error);
-          alert(error.message);
-          return;
-        }
-
-        // Em muitos projetos, signUp exige confirmação de e-mail.
-        // Mesmo assim, se houver sessão, ela pode aparecer aqui.
-        console.log('[AUTH] signUp data:', data);
-
-        alert('Cadastro realizado. Verifique seu e-mail para confirmar o acesso.');
-        return;
-      }
-
-      // LOGIN
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
-
-      if (error) {
-        console.error('[AUTH] signIn error:', error);
-        alert(error.message);
-        return;
-      }
-
-      console.log('[AUTH] signIn data:', data);
-
-      // Confere imediatamente se a sessão ficou disponível
-      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-      console.log('[AUTH] getSession:', { sessionData, sessionErr });
-
-      if (sessionErr || !sessionData?.session?.access_token) {
-        alert(
-          'Login efetuado, porém a sessão não foi persistida no navegador.\n\n' +
-          '1) Faça Ctrl+F5\n' +
-          '2) Tente novamente\n' +
-          '3) Se persistir, envie print da aba Network (POST /token) do Supabase.'
-        );
-        return;
-      }
-
-      // Sucesso: o App.tsx (onAuthStateChange) deve assumir daqui.
-    } finally {
-      setLoading(false);
+    if (isSignUp) {
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) alert(error.message);
+      else alert('Verifique seu e-mail para confirmar o cadastro!');
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) alert(error.message);
     }
+    setLoading(false);
   };
 
   return (
@@ -98,10 +45,8 @@ export const Auth: React.FC = () => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              autoComplete="email"
             />
           </div>
-
           <div className="relative">
             <Lock className="absolute left-3 top-3 text-gray-500" size={18} />
             <input
@@ -111,7 +56,6 @@ export const Auth: React.FC = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              autoComplete={isSignUp ? 'new-password' : 'current-password'}
             />
           </div>
 
@@ -120,7 +64,7 @@ export const Auth: React.FC = () => {
           </TacticalButton>
         </form>
 
-        <button
+        <button 
           onClick={() => setIsSignUp(!isSignUp)}
           className="w-full mt-6 text-xs text-gray-500 hover:text-[#C5A059] transition-colors uppercase font-bold"
         >

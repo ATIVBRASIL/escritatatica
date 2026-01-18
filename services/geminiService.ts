@@ -1,91 +1,54 @@
-import { supabase } from '../supabaseClient';
 import { ForceLevel } from '../types';
 
-// Interface para tipar a resposta do Backend
-interface RefineResponse {
-  refinedText: string;
-  code?: string;
-  renewUrl?: string;
-  debug?: string;
-}
+// ⚠️ URL DA EDGE FUNCTION (fixa)
+const FUNCTION_URL =
+  "https://dbbzehyummpjyedxmsme.supabase.co/functions/v1/refine-report";
 
-/**
- * Envia o relato para refinamento na Edge Function 'refine-report'
- * Utiliza o método nativo 'invoke' para garantir autenticação automática.
- */
-export const refineIncidentReport = async (rawText: string, forceLevel: ForceLevel): Promise<string> => {
+// ⚠️ ANON KEY (publica, segura para frontend)
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRiYnplaHl1bW1wanllZHhtc21lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1Njc4MTMsImV4cCI6MjA4NDE0MzgxM30.sFH5-IG1ZmUh5OpXZrsg0aogm-Qt2CyF6eyrCaGAOlQ";
+
+export const refineIncidentReport = async (
+  text: string,
+  level: ForceLevel
+) => {
   try {
-    console.log("Iniciando protocolo de envio via Supabase Invoke...");
+    console.log("Enviando para o QG:", text.substring(0, 40) + "...");
 
-    // 1. VERIFICAÇÃO DE SESSÃO LOCAL
-    // Garante que o cliente tem uma sessão antes de tentar invocar
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-    if (sessionError || !session) {
-      console.warn("Sem sessão ativa no cliente.");
-      throw new Error("Sessão expirada. Faça login novamente.");
-    }
-
-    // 2. DISPARO BLINDADO (INVOKE)
-    // O Supabase injeta automaticamente: Authorization (Bearer Token) e apikey.
-    const { data, error } = await supabase.functions.invoke<RefineResponse>('refine-report', {
-      body: { 
-        prompt: rawText,
-        forceLevel: forceLevel 
-      }
+    const response = await fetch(FUNCTION_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // ✅ AUTORIZAÇÃO EXPLÍCITA
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        prompt: text,
+        forceLevel: level,
+      }),
     });
 
-    // 3. TRATAMENTO DE ERROS DE INFRAESTRUTURA (Rede, 500, etc)
-    if (error) {
-      console.error("Erro de Infraestrutura (Invoke):", error);
-      // Se for um erro de sessão que o invoke capturou
-      if (error instanceof Error && error.message.includes("Auth")) {
-         throw new Error("Sessão expirada. Faça login novamente.");
-      }
-      throw new Error("Erro de comunicação com o QG. Tente novamente.");
+    if (!response.ok) {
+      const raw = await response.text();
+      console.error("Resposta bruta:", raw);
+      throw new Error(`Erro HTTP ${response.status}: ${raw}`);
     }
 
-    // 4. TRATAMENTO DE RESPOSTAS LÓGICAS DO BACKEND
-    // O backend retorna 200 OK mesmo para erros de negócio, precisamos ler o 'code'.
-    
-    if (!data) {
-      throw new Error("O QG retornou uma resposta vazia.");
+    const data = await response.json();
+
+    if (!data?.refinedText) {
+      console.error("Payload inesperado:", data);
+      throw new Error("Resposta inválida da Edge Function.");
     }
 
-    if (data.code === 'UNAUTHORIZED' || data.code === 'NO_PROFILE') {
-      throw new Error("Sessão inválida ou perfil não encontrado. Faça login novamente.");
-    }
-
-    if (data.code === 'EXPIRED') {
-      // Repassa o erro estruturado para o App.tsx abrir o popup de renovação
-      // eslint-disable-next-line no-throw-literal
-      throw { 
-        code: "EXPIRED", 
-        renewUrl: data.renewUrl || "https://treinamentos.ativbrasil.com.br",
-        message: "Acesso expirado." 
-      };
-    }
-
-    if (data.code === 'MISCONFIG' || data.code === 'CRITICAL') {
-      console.error("Erro Crítico no Backend:", data.debug || data.refinedText);
-      throw new Error(`Falha técnica no servidor. Contate o suporte.`);
-    }
-
-    // 5. SUCESSO
-    return data.refinedText || "";
-
-  } catch (err: any) {
-    // Se o erro já tem o formato especial (ex: EXPIRED), lança ele direto
-    if (err.code && err.renewUrl) throw err;
-
-    console.error("Falha Tática no Serviço:", err);
-    throw err;
+    return data.refinedText;
+  } catch (error) {
+    console.error("Falha Tática no Serviço:", error);
+    throw error;
   }
 };
 
-/**
- * Mensagem motivacional simples (mantida para compatibilidade)
- */
-export const generateMotivationalMessage = async (): Promise<string> => {
-  return "Mantenha o foco na missão. Sua segurança é prioridade."; 
+// Mantida para compatibilidade
+export const generateMotivationalMessage = async () => {
+  return "Mantenha o foco na missão. Sua segurança é prioridade.";
 };
