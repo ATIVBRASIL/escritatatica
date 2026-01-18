@@ -1,13 +1,15 @@
 import { ForceLevel } from '../types';
+import { supabase } from '../supabaseClient';
 
-// ⚠️ URL DA EDGE FUNCTION (fixa)
+/* =========================
+   Edge Function
+========================= */
 const FUNCTION_URL =
   "https://dbbzehyummpjyedxmsme.supabase.co/functions/v1/refine-report";
 
-// ⚠️ ANON KEY (publica, segura para frontend)
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRiYnplaHl1bW1wanllZHhtc21lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1Njc4MTMsImV4cCI6MjA4NDE0MzgxM30.sFH5-IG1ZmUh5OpXZrsg0aogm-Qt2CyF6eyrCaGAOlQ";
-
+/* =========================
+   Serviço principal
+========================= */
 export const refineIncidentReport = async (
   text: string,
   level: ForceLevel
@@ -15,12 +17,22 @@ export const refineIncidentReport = async (
   try {
     console.log("Enviando para o QG:", text.substring(0, 40) + "...");
 
+    // 1) Obtém sessão atual
+    const {
+      data: { session },
+      error: sessionErr,
+    } = await supabase.auth.getSession();
+
+    if (sessionErr || !session?.access_token) {
+      throw new Error("Sessão inválida. Faça login novamente.");
+    }
+
+    // 2) Chamada da Edge Function com token do usuário
     const response = await fetch(FUNCTION_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // ✅ AUTORIZAÇÃO EXPLÍCITA
-        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         prompt: text,
@@ -28,13 +40,19 @@ export const refineIncidentReport = async (
       }),
     });
 
-    if (!response.ok) {
-      const raw = await response.text();
-      console.error("Resposta bruta:", raw);
-      throw new Error(`Erro HTTP ${response.status}: ${raw}`);
+    const data = await response.json();
+
+    // 3) Tratamento de respostas controladas da function
+    if (data?.code === "UNAUTHORIZED") {
+      throw new Error("Sessão expirada. Faça login novamente.");
     }
 
-    const data = await response.json();
+    if (data?.code === "EXPIRED") {
+      const err: any = new Error("ACESSO_EXPIRADO");
+      err.code = "EXPIRED";
+      err.renewUrl = data?.renewUrl;
+      throw err;
+    }
 
     if (!data?.refinedText) {
       console.error("Payload inesperado:", data);
@@ -48,7 +66,9 @@ export const refineIncidentReport = async (
   }
 };
 
-// Mantida para compatibilidade
+/* =========================
+   Compatibilidade mantida
+========================= */
 export const generateMotivationalMessage = async () => {
   return "Mantenha o foco na missão. Sua segurança é prioridade.";
 };
